@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}购物车 - Demo Mall{% endblock %}
+{% block content %}
+<h2>我的购物车</h2>
+<table id="cart-table" class="data-table">
+  <thead>
+    <tr><th>商品</th><th>单价(元)</th><th>数量</th><th>小计(元)</th><th>操作</th></tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+    <tr class="cart-row" data-item-id="{{ item['id'] }}">
+      <td>{{ item['name'] }}</td>
+      <td class="cart-price">{{ '%.2f'|format(item['price']) }}</td>
+      <td>
+        <form method="post" action="{{ url_for('web.cart_update') }}" class="inline-form">
+          <input type="hidden" name="item_id" value="{{ item['id'] }}">
+          <input type="number" class="cart-qty" name="quantity" value="{{ item['quantity'] }}"
+                 min="1" max="{{ item['stock'] }}" data-item-id="{{ item['id'] }}">
+          <button type="submit" class="btn-update-qty">更新</button>
+        </form>
+      </td>
+      <td class="cart-subtotal">{{ '%.2f'|format(item['price'] * item['quantity']) }}</td>
+      <td>
+        <form method="post" action="{{ url_for('web.cart_delete') }}" class="inline-form">
+          <input type="hidden" name="item_id" value="{{ item['id'] }}">
+          <button type="submit" class="btn-delete-item">删除</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" id="cart-empty">购物车空空如也</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if items %}
+<p class="total-line">合计：<span id="cart-total">{{ '%.2f'|format(total) }}</span> 元</p>
+<a href="{{ url_for('web.checkout_page') }}" id="btn-checkout" class="button-link">去结算</a>
+{% endif %}
+{% endblock %}

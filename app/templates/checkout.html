@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}确认订单 - Demo Mall{% endblock %}
+{% block content %}
+<h2>确认订单</h2>
+<table id="checkout-table" class="data-table">
+  <thead><tr><th>商品</th><th>单价(元)</th><th>数量</th><th>小计(元)</th></tr></thead>
+  <tbody>
+    {% for item in items %}
+    <tr class="checkout-row">
+      <td>{{ item['name'] }}</td>
+      <td>{{ '%.2f'|format(item['price']) }}</td>
+      <td>{{ item['quantity'] }}</td>
+      <td>{{ '%.2f'|format(item['price'] * item['quantity']) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="total-line">应付金额：<span id="checkout-total">{{ '%.2f'|format(total) }}</span> 元</p>
+<form method="post" action="{{ url_for('web.checkout_submit') }}" id="checkout-form">
+  <button type="submit" id="btn-submit-order">提交订单</button>
+</form>
+{% endblock %}
