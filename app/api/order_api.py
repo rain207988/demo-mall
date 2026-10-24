@@ -4,13 +4,11 @@
 create 返回 data.order_id / data.order_no，后续接口全靠它串起来。
 """
 
-import random
-
 from flask import Blueprint, request
 
 from app import db, auth
 from app.errors import ok, fail
-from app.auth import current_epoch
+from app.auth import gen_order_no
 
 order_bp = Blueprint("order_api", __name__, url_prefix="/api/orders")
 
@@ -65,8 +63,12 @@ def create_order(payload):
             return fail(2002, f"商品 {goods_id} 库存不足：需 {quantity}，存 {stock}")
 
     # ③ 事务：扣库存 + 建订单 + 建订单明细 + (清购物车)，任一步失败全部回滚
+    # 并发缺陷修复（压测发现，2026-10-25）：扣库存必须用"原子条件更新"
+    # UPDATE ... WHERE stock >= ? —— 查库存和扣库存一步完成，
+    # 行锁保证并发下只有库存足够的请求能扣成功（rowcount=0 即库存不足）。
+    # 原实现"先 SELECT 校验再 UPDATE"，并发线程都在对方提交前通过了校验 → 超卖成负数。
     total = round(sum(i["price"] * i["quantity"] for i in buy_list), 2)
-    order_no = f"ORD{current_epoch()}{random.randint(100, 999)}"
+    order_no = gen_order_no()
     try:
         cur = conn.execute(
             "INSERT INTO orders(order_no, user_id, total_amount, status) VALUES(?,?,?, 'pending')",
@@ -78,8 +80,13 @@ def create_order(payload):
                 "INSERT INTO order_items(order_id, goods_id, goods_name, price, quantity) VALUES(?,?,?,?,?)",
                 (order_id, item["goods_id"], item["name"], item["price"], item["quantity"]),
             )
-            conn.execute("UPDATE goods SET stock = stock - ? WHERE id = ?",
-                         (item["quantity"], item["goods_id"]))
+            dec = conn.execute(
+                "UPDATE goods SET stock = stock - ? WHERE id = ? AND stock >= ?",
+                (item["quantity"], item["goods_id"], item["quantity"]),
+            )
+            if dec.rowcount == 0:
+                conn.rollback()
+                return fail(2002, f"商品 {item['goods_id']} 库存不足")
         if body.get("from_cart"):
             conn.execute("DELETE FROM cart_items WHERE user_id = ?", (user_id,))
         conn.commit()

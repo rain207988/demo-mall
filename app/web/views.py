@@ -176,7 +176,7 @@ def checkout_page():
 @web_bp.post("/checkout")
 @web_login_required
 def checkout_submit():
-    """复用订单创建逻辑：直接走与 API 相同的库存校验/事务。"""
+    """复用订单创建逻辑：与 API 相同的原子扣减/事务，防止并发超卖。"""
     rows = db.query_all(
         "SELECT c.goods_id, c.quantity, g.name, g.price, g.stock "
         "FROM cart_items c JOIN goods g ON g.id=c.goods_id WHERE c.user_id=?",
@@ -185,29 +185,37 @@ def checkout_submit():
     if not rows:
         flash("购物车为空")
         return redirect(url_for("web.goods_page"))
+
+    conn = db.get_db()
     merged: dict[int, int] = {}
     for r in rows:
         merged[r["goods_id"]] = merged.get(r["goods_id"], 0) + r["quantity"]
     for goods_id, quantity in merged.items():
-        stock = db.query_one("SELECT stock FROM goods WHERE id=?", (goods_id,))["stock"]
-        if quantity > stock:
+        # 原子条件扣减：查库存+扣库存一步完成，行锁兜底并发；失败整体回滚
+        dec = conn.execute("UPDATE goods SET stock = stock - ? WHERE id = ? AND stock >= ?",
+                           (quantity, goods_id, quantity))
+        if dec.rowcount == 0:
+            conn.rollback()
             flash("库存不足，无法下单")
             return redirect(url_for("web.cart_page"))
 
-    conn = db.get_db()
     total = round(sum(r["price"] * r["quantity"] for r in rows), 2)
-    order_no = f"ORD{auth.current_epoch()}{__import__('random').randint(100, 999)}"
-    cur = conn.execute(
-        "INSERT INTO orders(order_no, user_id, total_amount, status) VALUES(?,?,?, 'pending')",
-        (order_no, session["user_id"], total),
-    )
-    order_id = cur.lastrowid
-    for r in rows:
-        conn.execute("INSERT INTO order_items(order_id, goods_id, goods_name, price, quantity) "
-                     "VALUES(?,?,?,?,?)", (order_id, r["goods_id"], r["name"], r["price"], r["quantity"]))
-        conn.execute("UPDATE goods SET stock = stock - ? WHERE id = ?", (r["quantity"], r["goods_id"]))
-    conn.execute("DELETE FROM cart_items WHERE user_id = ?", (session["user_id"],))
-    conn.commit()
+    order_no = auth.gen_order_no()
+    try:
+        cur = conn.execute(
+            "INSERT INTO orders(order_no, user_id, total_amount, status) VALUES(?,?,?, 'pending')",
+            (order_no, session["user_id"], total),
+        )
+        order_id = cur.lastrowid
+        for r in rows:
+            conn.execute("INSERT INTO order_items(order_id, goods_id, goods_name, price, quantity) "
+                         "VALUES(?,?,?,?,?)", (order_id, r["goods_id"], r["name"], r["price"], r["quantity"]))
+        conn.execute("DELETE FROM cart_items WHERE user_id = ?", (session["user_id"],))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        flash("下单失败，请重试")
+        return redirect(url_for("web.cart_page"))
     flash(f"下单成功，订单号 {order_no}")
     return redirect(url_for("web.orders_page"))
 

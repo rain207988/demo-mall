@@ -96,3 +96,13 @@ def login_required(func):
 def current_epoch() -> int:
     """当前时间戳（秒），给 order_no 生成用。"""
     return int(datetime.now().timestamp())
+
+
+def gen_order_no() -> str:
+    """生成全局唯一订单号：ORD + 秒级时间戳 + 8位随机hex。
+
+    历史 bug（压测发现，2026-10-25 修复）：原实现是 时间戳+3位随机数(100-999)，
+    并发下单同一秒内随机段碰撞 → orders.order_no UNIQUE 冲突 → 500。
+    8 位 hex 有 2^32 空间，同一秒内碰撞概率可忽略；严格幂等场景应改用数据库序列。
+    """
+    return f"ORD{current_epoch()}{uuid.uuid4().hex[:8]}"
